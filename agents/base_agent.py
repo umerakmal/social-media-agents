@@ -14,12 +14,13 @@ from logger.exceptions import (
     AIGenerationError,
     EngagementError
 )
+import time
 
 class BaseAgent(ABC):
     def __init__(self, platform_name: str, config):
         self.platform_name = platform_name
         self.config = config
-        self.logger = AgentLogger(platform_name)
+        self.logger = AgentLogger("base_agent")
         
         try:
             # Initialize prompts
@@ -66,6 +67,7 @@ class BaseAgent(ABC):
                 self.logger.info("Attempting login")
                 await self.scraper.login()
                 self.logger.info("Login successful")
+                time.sleep(20)
             except AuthenticationError as e:
                 self.logger.error(f"Authentication failed: {str(e)}")
                 raise

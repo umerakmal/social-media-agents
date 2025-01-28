@@ -17,6 +17,10 @@ from selenium.common.exceptions import (
     WebDriverException
 )
 from logger.logger import AgentLogger, log_execution_time
+from .post_extractor import PostExtractor
+from .scroll_manager import ScrollManager
+import random
+import time
 
 class BaseScraper:
     def __init__(self, platform: str, credentials: Dict, selectors: Dict):
@@ -98,19 +102,17 @@ class BaseScraper:
         try:
             timeout = timeout or self.timeout
             self.logger.debug(f"Waiting for element: {selector}")
+            # Add wait for element to be both present AND visible
             element = WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                EC.presence_of_element_located((By.CSS_SELECTOR, selector)) and
+                EC.visibility_of_element_located((By.CSS_SELECTOR, selector))
             )
-            self.logger.debug(f"Element found: {selector}")
+            # Add a small delay after finding element
+            time.sleep(1)
             return element
         except TimeoutException:
             self.logger.error(f"Element not found: {selector}")
-            raise ElementNotFoundError(
-                f"Element '{selector}' not found after {timeout} seconds"
-            )
-        except Exception as e:
-            self.logger.error(f"Error finding element '{selector}': {str(e)}")
-            raise ScrapingError(f"Error finding element '{selector}': {str(e)}")
+            return None  # Return None instead of raising exception
 
     def check_for_rate_limit(self) -> bool:
         """Check if rate limit page is shown"""
@@ -122,60 +124,94 @@ class BaseScraper:
         # Implement platform-specific login error detection
         return False
 
+    @log_execution_time
     async def get_posts(self, count: int = 10) -> List[Dict]:
         """Get posts using platform-specific selectors"""
         try:
+            if not self._is_session_valid():
+                self.logger.warning("Invalid session detected, attempting to recover")
+                await self.login()
+                await asyncio.sleep(5)
+            
             self.logger.info(f"Fetching {count} posts")
             posts = []
             
-            self.logger.debug("Waiting for post container")
-            post_elements = self.wait_for_element(self.selectors['post_container'])
+            # Initialize helpers
+            post_extractor = PostExtractor(self.driver, self.selectors)
+            scroll_manager = ScrollManager(self.driver)
             
-            self.logger.debug(f"Processing {len(post_elements[:count])} posts")
-            for element in post_elements[:count]:
+            # Initial wait for feed
+            try:
+                WebDriverWait(self.driver, self.timeout).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, self.selectors['post_container']))
+                )
+                await asyncio.sleep(3)
+            except TimeoutException:
+                raise ElementNotFoundError("Could not find any posts in feed")
+            
+            # Scroll and collect posts
+            max_scrolls = 10
+            scroll_count = 0
+            
+            while len(posts) < count and scroll_count < max_scrolls:
+                if not self._is_session_valid():
+                    self.logger.warning("Session became invalid during scrolling, re-establishing...")
+                    await self.login()
+                    await asyncio.sleep(5)
+                
+                await asyncio.sleep(random.uniform(2, 5))
+                
                 try:
-                    post_data = {
-                        'id': self.extract_post_id(element),
-                        'content': self.extract_post_content(element),
-                        'author': self.extract_post_author(element)
-                    }
-                    posts.append(post_data)
-                except Exception as e:
-                    self.logger.warning(f"Failed to process post: {str(e)}")
-                    continue
+                    current_posts = self.driver.find_elements(By.CSS_SELECTOR, self.selectors['post_container'])
+                    self.logger.debug(f"Found {len(current_posts)} posts before scroll")
+                    
+                    for post_element in current_posts[len(posts):]:
+                        try:
+                            self.driver.execute_script(
+                                "arguments[0].setAttribute('data-processed', 'true');", 
+                                post_element
+                            )
+                            
+                            scroll_manager.scroll_element_into_view(post_element)
+                            await asyncio.sleep(1)
+                            
+                            post_data = await post_extractor.extract_post_data(post_element)
+                            
+                            if post_data.get('content'):
+                                posts.append(post_data)
+                                self.logger.debug(f"Added post {len(posts)}/{count}")
+                                
+                                if len(posts) >= count:
+                                    return posts[:count]
+                                    
+                        except WebDriverException as e:
+                            if "invalid session id" in str(e).lower():
+                                raise
+                            self.logger.warning(f"Failed to process post: {str(e)}")
+                            continue
+                    
+                    reached_bottom = await scroll_manager.smooth_scroll()
+                    if reached_bottom:
+                        self.logger.debug("Reached end of feed")
+                        break
+                    
+                    scroll_count += 1
+                    
+                except WebDriverException as e:
+                    if "invalid session id" in str(e).lower():
+                        continue
+                    raise
             
             self.logger.info(f"Successfully fetched {len(posts)} posts")
-            return posts
+            return posts[:count]
             
         except Exception as e:
             self.logger.error(f"Failed to fetch posts: {str(e)}")
             raise ScrapingError(f"Failed to fetch posts: {str(e)}")
 
-    def extract_post_id(self, element) -> str:
-        """Extract post ID using platform-specific selector"""
+    def _is_session_valid(self) -> bool:
         try:
-            return element.get_attribute(self.selectors['post_id_attribute'])
-        except Exception as e:
-            self.logger.error(f"Failed to extract post ID: {str(e)}")
-            raise ScrapingError(f"Failed to extract post ID: {str(e)}")
-
-    def extract_post_content(self, element) -> str:
-        """Extract post content using platform-specific selector"""
-        try:
-            content_element = element.find_element(By.CSS_SELECTOR, self.selectors['post_content'])
-            return content_element.text
-        except Exception as e:
-            self.logger.error(f"Failed to extract post content: {str(e)}")
-            raise ScrapingError(f"Failed to extract post content: {str(e)}")
-
-    def extract_post_author(self, element) -> Dict:
-        """Extract post author using platform-specific selector"""
-        try:
-            author_element = element.find_element(By.CSS_SELECTOR, self.selectors['post_author'])
-            return {
-                'name': author_element.text,
-                'profile_url': author_element.get_attribute('href')
-            }
-        except Exception as e:
-            self.logger.error(f"Failed to extract post author: {str(e)}")
-            raise ScrapingError(f"Failed to extract post author: {str(e)}")
+            self.driver.find_element(By.TAG_NAME, 'body')
+            return True
+        except:
+            return False
