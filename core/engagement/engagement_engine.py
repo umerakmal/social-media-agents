@@ -27,15 +27,15 @@ class EngagementEngine:
             # Ensure post is in view
             scraper.driver.execute_script("""
                 arguments[0].scrollIntoView({
-                    behavior: 'auto',
+                    behavior: 'smooth',
                     block: 'center'
                 });
             """, post_element)
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
             # First handle the reaction
             await self._add_reaction(scraper, post_element, response['reaction'])
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
             # Then add the comment
             await self._add_comment(scraper, post_element, response['comment'])
@@ -138,8 +138,17 @@ class EngagementEngine:
         try:
             self.logger.debug("Adding comment")
             
-            # Find and click comment button with shorter timeout
-            comment_button = WebDriverWait(post_element, 3).until(
+            # Ensure post is in view
+            scraper.driver.execute_script("""
+                arguments[0].scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center'
+                });
+            """, post_element)
+            await asyncio.sleep(2)
+            
+            # Find and click comment button
+            comment_button = WebDriverWait(post_element, 5).until(
                 EC.element_to_be_clickable((
                     By.CSS_SELECTOR,
                     'button.artdeco-button.comment-button[aria-label="Comment"]'
@@ -151,34 +160,73 @@ class EngagementEngine:
             except:
                 scraper.driver.execute_script("arguments[0].click();", comment_button)
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             
-            # Find comment field using exact DOM structure
-            comment_field = WebDriverWait(scraper.driver, 3).until(
+            # Find comment field using the exact DOM structure
+            comment_field = WebDriverWait(scraper.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 
                     'div.ql-editor[data-gramm="false"][contenteditable="true"][data-placeholder="Add a comment…"]'
                 ))
             )
             
-            # Enter comment text
-            comment_field.clear()
-            comment_field.send_keys(comment_text)
-            await asyncio.sleep(1)
+            if not comment_field:
+                raise Exception("Could not find comment field")
+
+            self.logger.debug("Found comment field, entering text...")
             
-            # Find and click submit button
-            submit_button = WebDriverWait(scraper.driver, 3).until(
+            # Clear and enter comment text
+            comment_field.clear()
+            actions = ActionChains(scraper.driver)
+            actions.move_to_element(comment_field)
+            actions.click()
+            actions.send_keys(comment_text)
+            actions.perform()
+            
+            await asyncio.sleep(2)
+            
+            # Find and click the submit button using the exact class
+            submit_button = WebDriverWait(scraper.driver, 5).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 
                     'button.comments-comment-box__submit-button--cr.artdeco-button--primary'
                 ))
             )
             
-            # Click submit button
+            if not submit_button:
+                raise Exception("Could not find submit button")
+
+            self.logger.debug("Found submit button, clicking...")
+            
+            # Ensure submit button is in view
+            scraper.driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
+            await asyncio.sleep(1)
+            
+            # Try different click methods
             try:
                 submit_button.click()
             except:
-                scraper.driver.execute_script("arguments[0].click();", submit_button)
+                try:
+                    scraper.driver.execute_script("arguments[0].click();", submit_button)
+                except:
+                    actions = ActionChains(scraper.driver)
+                    actions.move_to_element(submit_button)
+                    actions.click()
+                    actions.perform()
             
-            await asyncio.sleep(2)
+            # Wait for comment to be posted
+            await asyncio.sleep(3)
+            
+            # Verify comment was posted
+            try:
+                posted_comment = WebDriverWait(scraper.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, 
+                        f"//div[contains(@class, 'comments-comment-item')]//span[contains(text(), '{comment_text}')]"
+                    ))
+                )
+                if posted_comment:
+                    self.logger.info("Successfully verified comment was posted")
+                    await asyncio.sleep(2)  # Wait before moving on
+            except:
+                self.logger.warning("Could not verify if comment was posted")
             
             self.logger.info("Successfully added comment")
             

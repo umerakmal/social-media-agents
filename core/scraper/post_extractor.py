@@ -17,39 +17,33 @@ class PostExtractor:
     async def extract_post_data(self, post_element):
         """Extract all data from a post"""
         try:
-            # Set shorter timeout for faster extraction
-            wait = WebDriverWait(post_element, 3)  # Reduced from 5 to 3 seconds
-            
-            # Extract content first as it's most important
+            # Extract all data
             content = await self._get_post_content(post_element)
-            if not content:
-                raise Exception("No content found in post")
-                
-            # Extract other data concurrently
-            author_task = asyncio.create_task(self._get_post_author(post_element))
-            url_task = asyncio.create_task(self._get_post_url(post_element))
-            timestamp_task = asyncio.create_task(self._get_post_timestamp(post_element))
-            metadata_task = asyncio.create_task(self._get_post_metadata(post_element))
+            author = await self._get_post_author(post_element)
             
-            # Wait for all tasks to complete
-            author = await author_task
-            url = await url_task
-            timestamp = await timestamp_task
-            metadata = await metadata_task
-
+            # Store post data
             post_data = {
-                "content": content,
-                "author": author,
-                "url": url,
-                "timestamp": timestamp,
-                "metadata": metadata
+                'element': post_element,
+                'content': content,
+                'author': author,
+                'url': await self._get_post_url(post_element),
+                'timestamp': await self._get_post_timestamp(post_element),
+                'metadata': {
+                    'post_id': post_element.get_attribute('data-urn'),
+                    'is_sponsored': await self._is_sponsored_post(post_element),
+                }
             }
 
-            self.logger.info(f"Extracted post data: {json.dumps(post_data, ensure_ascii=False)}")
+            # Log complete post data (excluding WebElement)
+            log_data = post_data.copy()
+            log_data.pop('element')  # Remove WebElement as it's not JSON serializable
+            self.logger.info("Extracted post data:")
+            self.logger.info(json.dumps(log_data, indent=2))
+
             return post_data
 
         except Exception as e:
-            self.logger.error(f"Failed to extract post data: {str(e)}\nTraceback: {traceback.format_exc()}")
+            self.logger.error(f"Failed to extract post data: {str(e)}")
             raise
 
     async def _get_post_content(self, post_element):
