@@ -125,82 +125,75 @@ class BaseScraper:
         return False
 
     @log_execution_time
-    async def get_posts(self, count: int = 10) -> List[Dict]:
-        """Get posts using platform-specific selectors"""
+    async def get_posts(self, count: int = 30) -> List[Dict]:
+        """Get posts one by one with smooth scrolling"""
         try:
             if not self._is_session_valid():
                 self.logger.warning("Invalid session detected, attempting to recover")
                 await self.login()
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)  # Fixed 10 second delay after login
             
-            self.logger.info(f"Fetching {count} posts")
+            self.logger.info(f"Starting to fetch {count} posts")
             posts = []
+            processed_elements = set()
             
             # Initialize helpers
             post_extractor = PostExtractor(self.driver, self.selectors)
             scroll_manager = ScrollManager(self.driver)
             
-            # Initial wait for feed
+            # Wait for initial feed load
             try:
+                self.logger.debug("Waiting for feed to load")
                 WebDriverWait(self.driver, self.timeout).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, self.selectors['post_container']))
                 )
-                await asyncio.sleep(3)
             except TimeoutException:
                 raise ElementNotFoundError("Could not find any posts in feed")
-            
-            # Scroll and collect posts
-            max_scrolls = 10
-            scroll_count = 0
-            
-            while len(posts) < count and scroll_count < max_scrolls:
-                if not self._is_session_valid():
-                    self.logger.warning("Session became invalid during scrolling, re-establishing...")
-                    await self.login()
-                    await asyncio.sleep(5)
+
+            while len(posts) < count:
+                # Find visible posts
+                current_posts = self.driver.find_elements(By.CSS_SELECTOR, self.selectors['post_container'])
                 
-                await asyncio.sleep(random.uniform(2, 5))
-                
-                try:
-                    current_posts = self.driver.find_elements(By.CSS_SELECTOR, self.selectors['post_container'])
-                    self.logger.debug(f"Found {len(current_posts)} posts before scroll")
-                    
-                    for post_element in current_posts[len(posts):]:
-                        try:
-                            self.driver.execute_script(
-                                "arguments[0].setAttribute('data-processed', 'true');", 
-                                post_element
-                            )
-                            
-                            scroll_manager.scroll_element_into_view(post_element)
-                            await asyncio.sleep(1)
-                            
-                            post_data = await post_extractor.extract_post_data(post_element)
-                            
-                            if post_data.get('content'):
-                                posts.append(post_data)
-                                self.logger.debug(f"Added post {len(posts)}/{count}")
-                                
-                                if len(posts) >= count:
-                                    return posts[:count]
-                                    
-                        except WebDriverException as e:
-                            if "invalid session id" in str(e).lower():
-                                raise
-                            self.logger.warning(f"Failed to process post: {str(e)}")
-                            continue
-                    
-                    reached_bottom = await scroll_manager.smooth_scroll()
-                    if reached_bottom:
-                        self.logger.debug("Reached end of feed")
+                for post_element in current_posts:
+                    if len(posts) >= count:
                         break
-                    
-                    scroll_count += 1
-                    
-                except WebDriverException as e:
-                    if "invalid session id" in str(e).lower():
+                        
+                    try:
+                        element_id = post_element.id
+                        if element_id in processed_elements:
+                            continue
+                            
+                        # Scroll post into view smoothly
+                        self.logger.debug("Scrolling to next post")
+                        await scroll_manager.scroll_element_into_view(post_element)
+                        await asyncio.sleep(1)  # Wait for scroll to complete
+                        
+                        # Extract post data
+                        self.logger.debug("Extracting post data")
+                        post_data = await post_extractor.extract_post_data(post_element)
+                        
+                        if post_data.get('content'):
+                            posts.append(post_data)
+                            processed_elements.add(element_id)
+                            self.logger.info(f"Processed post {len(posts)}/{count}")
+                            
+                            # Here you would add your engagement logic
+                            # await self.engage_with_post(post_data)
+                            
+                            await asyncio.sleep(2)  # Wait before moving to next post
+                            
+                    except Exception as e:
+                        self.logger.warning(f"Failed to process post: {str(e)}")
                         continue
-                    raise
+                
+                # If we haven't found enough posts, scroll to load more
+                if len(posts) < count:
+                    self.logger.debug("Scrolling to load more posts")
+                    scroll_result = await scroll_manager.natural_scroll()
+                    if not scroll_result['scrolled']:
+                        self.logger.warning("Failed to scroll further")
+                        break
+                    await asyncio.sleep(2)  # Wait for new content to load
             
             self.logger.info(f"Successfully fetched {len(posts)} posts")
             return posts[:count]
@@ -215,3 +208,122 @@ class BaseScraper:
             return True
         except:
             return False
+
+    async def get_next_post(self) -> Dict:
+        """Get the next unprocessed post with smooth scrolling"""
+        try:
+            # Initialize helpers if not already done
+            if not hasattr(self, 'post_extractor'):
+                self.post_extractor = PostExtractor(self.driver, self.selectors)
+            if not hasattr(self, 'scroll_manager'):
+                self.scroll_manager = ScrollManager(self.driver)
+            if not hasattr(self, 'processed_posts'):
+                self.processed_posts = set()
+            
+            max_scroll_attempts = 5
+            scroll_attempt = 0
+            
+            while scroll_attempt < max_scroll_attempts:
+                # Find all current posts
+                current_posts = self.driver.find_elements(By.CSS_SELECTOR, self.selectors['post_container'])
+                self.logger.debug(f"Found {len(current_posts)} posts in current view")
+                
+                # Try to process unprocessed posts
+                for post_element in current_posts:
+                    try:
+                        if not post_element.is_displayed():
+                            continue
+                            
+                        element_id = post_element.id
+                        if element_id in self.processed_posts:
+                            continue
+                        
+                        # Scroll post into view smoothly
+                        self.logger.debug(f"Scrolling to post {element_id}")
+                        self.driver.execute_script("""
+                            arguments[0].scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'center'
+                            });
+                        """, post_element)
+                        await asyncio.sleep(2)
+                        
+                        # Extract post data
+                        post_data = await self.post_extractor.extract_post_data(post_element)
+                        
+                        if post_data and post_data.get('content'):
+                            self.processed_posts.add(element_id)
+                            return post_data
+                            
+                    except Exception as e:
+                        self.logger.warning(f"Failed to process post: {str(e)}")
+                        continue
+                
+                # If we haven't found a valid post, scroll to load more
+                self.logger.info("Scrolling to load more posts")
+                last_height = self.driver.execute_script("return document.body.scrollHeight")
+                
+                # Scroll down smoothly
+                self.driver.execute_script("""
+                    window.scrollTo({
+                        top: window.pageYOffset + 800,
+                        behavior: 'smooth'
+                    });
+                """)
+                await asyncio.sleep(2)
+                
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    scroll_attempt += 1
+                else:
+                    scroll_attempt = 0  # Reset counter if we successfully loaded new content
+                
+                await asyncio.sleep(1)
+            
+            self.logger.warning("Could not find more posts after multiple scroll attempts")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error in get_next_post: {str(e)}")
+            return None
+
+    async def _get_post_content(self, post_element) -> str:
+        """Extract post content with better selectors"""
+        content_selectors = [
+            'div.feed-shared-update-v2__description-wrapper',
+            'div.feed-shared-text-view',
+            'div.feed-shared-update-v2__commentary',
+            'span.break-words',
+            'div.update-components-text'  # Added new selector
+        ]
+        
+        for selector in content_selectors:
+            try:
+                content_element = WebDriverWait(post_element, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if content_element and content_element.text.strip():
+                    return content_element.text.strip()
+            except:
+                continue
+        return ""
+
+    async def _get_reaction_button(self, post_element):
+        """Find reaction button with better selectors"""
+        reaction_selectors = [
+            'button.react-button',
+            'button[aria-label="React to this post"]',
+            'button.artdeco-button--muted.reaction-button',
+            'button[data-control-name="react_button"]'  # Added new selector
+        ]
+        
+        for selector in reaction_selectors:
+            try:
+                button = WebDriverWait(post_element, 5).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                )
+                if button.is_displayed():
+                    return button
+            except:
+                continue
+        return None

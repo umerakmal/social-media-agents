@@ -58,68 +58,81 @@ class BaseAgent(ABC):
 
     @log_execution_time
     async def run(self):
-        """Main agent workflow"""
+        """Run the agent workflow"""
         try:
             self.logger.info("Starting agent workflow")
             
-            # Login
-            try:
-                self.logger.info("Attempting login")
-                await self.scraper.login()
-                self.logger.info("Login successful")
-                time.sleep(20)
-            except AuthenticationError as e:
-                self.logger.error(f"Authentication failed: {str(e)}")
-                raise
+            # Login and wait
+            self.logger.info("Attempting login")
+            await self.scraper.login()
+            self.logger.info("Login successful, waiting 10 seconds...")
+            await asyncio.sleep(10)
             
-            # Fetch posts
-            try:
-                self.logger.info("Fetching posts")
-                posts = await self.scraper.get_posts()
-                self.logger.info(f"Found {len(posts)} posts")
-            except NetworkError as e:
-                self.logger.error(f"Network error fetching posts: {str(e)}")
-                raise
+            posts_processed = 0
+            max_posts = 30
             
-            # Process posts
-            for index, post in enumerate(posts, 1):
+            while posts_processed < max_posts:
                 try:
-                    self.logger.info(f"Processing post {index}/{len(posts)}")
+                    self.logger.info(f"Processing post {posts_processed + 1}/{max_posts}")
                     
-                    # Generate AI response
-                    try:
-                        response = await self.ai_engine.generate_response(
+                    # Get next post with timeout
+                    post = await asyncio.wait_for(
+                        self.scraper.get_next_post(),
+                        timeout=30  # 30 second timeout for getting post
+                    )
+
+                    self.logger.debug(f"Post content: {post}")
+                    if not post:
+                        self.logger.warning("No more posts found")
+                        break
+                    
+                    # Generate AI response with timeout
+                    self.logger.info("Generating AI response")
+                    ai_response = await asyncio.wait_for(
+                        self.ai_engine.generate_response(
                             post_content=post,
                             prompt_template=self.prompts.format_prompt(
                                 'engagement',
                                 post_content=post.get('content', ''),
                                 author_name=post.get('author', {}).get('name', 'Unknown')
                             )
-                        )
-                    except Exception as e:
-                        raise AIGenerationError(f"AI generation failed: {str(e)}")
+                        ),
+                        timeout=30  # 30 second timeout for AI response
+                    )
                     
-                    # Engage with post
-                    try:
-                        await self.engagement_engine.engage(
+                    self.logger.info(f"AI generated reaction: {ai_response['reaction']}")
+                    
+                    # Engage with post with timeout
+                    self.logger.info("Engaging with post")
+                    await asyncio.wait_for(
+                        self.engagement_engine.engage(
                             platform=self.platform_name,
                             scraper=self.scraper,
                             post=post,
-                            response=response
-                        )
-                    except Exception as e:
-                        raise EngagementError(f"Engagement failed: {str(e)}")
+                            response=ai_response
+                        ),
+                        timeout=30  # 30 second timeout for engagement
+                    )
                     
-                    self.logger.info(f"Successfully processed post {index}")
+                    posts_processed += 1
+                    await asyncio.sleep(2)  # Brief pause between posts
                     
-                except RateLimitError as e:
-                    self.logger.warning(f"Rate limit hit, waiting: {str(e)}")
-                    await asyncio.sleep(300)  # Wait 5 minutes
+                except asyncio.TimeoutError:
+                    self.logger.error("Operation timed out, moving to next post")
                     continue
-                except (AIGenerationError, EngagementError) as e:
-                    self.logger.error(f"Error processing post {index}: {str(e)}")
+                except Exception as e:
+                    self.logger.error(f"Error processing post: {str(e)}")
                     continue
                     
-        except SocialMediaAgentException as e:
-            self.logger.critical(f"Critical error in agent workflow: {str(e)}")
+            self.logger.info(f"Completed processing {posts_processed} posts")
+            
+        except Exception as e:
+            self.logger.error(f"Error in agent workflow: {str(e)}")
             raise
+        finally:
+            try:
+                if hasattr(self, 'scraper'):
+                    await self.scraper.cleanup()
+                    self.logger.info("Browser closed successfully")
+            except Exception as e:
+                self.logger.error(f"Error during cleanup: {str(e)}")

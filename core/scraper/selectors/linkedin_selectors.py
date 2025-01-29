@@ -1,33 +1,71 @@
 LINKEDIN_SELECTORS = {
+    # Login selectors
     'login_url': 'https://www.linkedin.com/login',
     'username_field': '#username',
     'password_field': '#password',
     'login_button': '[type="submit"]',
     
-    # Post selectors - updated for latest LinkedIn structure
-    'post_container': '.update-components-actor,.feed-shared-update-v2,.occludable-update',
-    'post_content': (
-        '.feed-shared-update-v2__description-text,.feed-shared-text-view,'
-        '.feed-shared-update-v2__commentary,.update-components-text'
+    # Post container selectors
+    'post_container': (
+        'div.feed-shared-update-v2:not([data-promoted=true]),'
+        'div.relative.feed-shared-update-v2:not(.feed-shared-update-v2--sponsored)'
     ),
     
-    # Author selectors - updated for latest LinkedIn structure
+    # Post content selectors
+    'post_content': (
+        'div.feed-shared-update-v2__description-wrapper,'
+        'div.feed-shared-text-view,'
+        'div.feed-shared-update-v2__commentary,'
+        'div.update-components-text,'
+        'span.break-words,'
+        'div.feed-shared-inline-show-more-text'
+    ),
+    
+    # Author selectors
     'post_author': (
-        '.update-components-actor__name,.feed-shared-actor__name,'
-        '.update-components-actor__meta,.feed-shared-actor__meta'
+        'span.feed-shared-actor__name,'
+        'span.update-components-actor__name,'
+        'a.feed-shared-actor__container'
     ),
     'author_link': (
-        '.update-components-actor__meta-link,'
-        '.feed-shared-actor__meta-link,'
-        '.update-components-actor__container,'
-        '.feed-shared-actor__container'
+        'a.feed-shared-actor__container,'
+        'a.update-components-actor__container,'
+        'a.app-aware-link.update-components-actor__meta-link'
     ),
     
-    # Interaction selectors
-    'comment_button': (
-        'button[aria-label*="comment" i],'  # Case-insensitive match
-        'button.comments-comment-box__submit-button,'
-        '.feed-shared-comment-button'
+    # Reaction selectors
+    'reaction_button': (
+        'button.artdeco-button.react-button__trigger,' +
+        'button.reactions-react-button'
     ),
-    'comment_field': '.comments-comment-box__input'
+    
+    'reaction_menu_trigger': (
+        'button.reactions-menu__trigger,' +
+        'button.artdeco-button.reactions-menu__trigger'
+    ),
+
+    'reactions': {
+        'LIKE': 'button[aria-label="React Like"]',
+        'CELEBRATE': 'button[aria-label="React Celebrate"]',
+        'SUPPORT': 'button[aria-label="React Support"]',
+        'LOVE': 'button[aria-label="React Love"]',
+        'INSIGHTFUL': 'button[aria-label="React Insightful"]',
+        'FUNNY': 'button[aria-label="React Funny"]'
+    },
+    
+    # Comment selectors
+    'comment_button': (
+        'button[aria-label*="comment" i],'
+        'button.comments-comment-box__submit-button,'
+        'button[data-control-name="comment"]'
+    ),
+    'comment_field': (
+        'div.ql-editor[contenteditable="true"],'
+        'div[role="textbox"],'
+        'div.comments-comment-box__content-editor'
+    ),
+    'comment_submit': (
+        'button[type="submit"],'
+        'button.comments-comment-box__submit-button'
+    )
 }
