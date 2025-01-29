@@ -35,21 +35,22 @@ LINKEDIN_SELECTORS = {
     
     # Reaction selectors
     'reaction_button': (
-        'button.react-button,'
-        'button[aria-label="React to this post"],'
-        'button.artdeco-button--muted.reaction-button,'
-        'button[data-control-name="react_button"],'
-        'span[data-test-id="reaction-button"]'
+        'button.artdeco-button.react-button__trigger,' +
+        'button.reactions-react-button'
     ),
     
-    # Specific reaction selectors
-    'reaction_options': {
-        'LIKE': '[aria-label="Like"]',
-        'CELEBRATE': '[aria-label="Celebrate"]',
-        'SUPPORT': '[aria-label="Support"]',
-        'FUNNY': '[aria-label="Funny"]',
-        'LOVE': '[aria-label="Love"]',
-        'INSIGHTFUL': '[aria-label="Insightful"]'
+    'reaction_menu_trigger': (
+        'button.reactions-menu__trigger,' +
+        'button.artdeco-button.reactions-menu__trigger'
+    ),
+
+    'reactions': {
+        'LIKE': 'button[aria-label="React Like"]',
+        'CELEBRATE': 'button[aria-label="React Celebrate"]',
+        'SUPPORT': 'button[aria-label="React Support"]',
+        'LOVE': 'button[aria-label="React Love"]',
+        'INSIGHTFUL': 'button[aria-label="React Insightful"]',
+        'FUNNY': 'button[aria-label="React Funny"]'
     },
     
     # Comment selectors

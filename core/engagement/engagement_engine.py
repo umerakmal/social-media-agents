@@ -46,92 +46,56 @@ class EngagementEngine:
             self.logger.error(f"Failed to engage with post: {str(e)}")
             raise EngagementError(f"Failed to engage with post: {str(e)}")
 
-    async def _add_reaction(self, scraper, post_element, reaction_type: str):
-        """Add reaction to the post"""
+    async def _add_reaction(self, scraper, post_element, reaction_type: str) -> bool:
+        """Add reaction to post with improved handling"""
         try:
-            self.logger.debug(f"Adding reaction: {reaction_type}")
+            # First find and hover over the main reaction button to show the menu
+            reaction_button = await self._safely_find_element(
+                post_element,
+                By.CSS_SELECTOR,
+                scraper.selectors['reaction_button']
+            )
             
-            # Ensure post is in view
-            scraper.driver.execute_script("""
-                arguments[0].scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'center'
-                });
-            """, post_element)
-            await asyncio.sleep(2)
-
-            # First find and click the main reaction button to open the menu
-            main_button_selectors = [
-                'button.artdeco-button.react-button__trigger',
-                'button.social-actions-button.react-button__trigger',
-                'button[aria-label="React Like"]'
-            ]
-
-            main_reaction_button = None
-            for selector in main_button_selectors:
-                try:
-                    main_reaction_button = WebDriverWait(post_element, 5).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    if main_reaction_button:
-                        break
-                except:
-                    continue
-
-            if not main_reaction_button:
-                raise Exception("Could not find main reaction button")
-
-            # Click the main button to open reaction menu
+            if not reaction_button:
+                self.logger.warning("Could not find main reaction button")
+                return False
+            
+            # Hover over the button to show reaction menu
+            actions = ActionChains(scraper.driver)
+            actions.move_to_element(reaction_button).perform()
+            await asyncio.sleep(1)  # Wait for menu to appear
+            
+            # Try to find the specific reaction button
             try:
-                main_reaction_button.click()
-                await asyncio.sleep(1)
-            except:
-                scraper.driver.execute_script("arguments[0].click();", main_reaction_button)
-                await asyncio.sleep(1)
-
-            # Map reaction types to their aria-labels
-            reaction_map = {
-                'LIKE': 'React Like',
-                'CELEBRATE': 'React Celebrate',
-                'SUPPORT': 'React Support',
-                'LOVE': 'React Love',
-                'INSIGHTFUL': 'React Insightful',
-                'FUNNY': 'React Funny'
-            }
-
-            # Find and click the specific reaction button
-            reaction_button = None
-            try:
-                reaction_button = WebDriverWait(scraper.driver, 5).until(
+                specific_reaction = WebDriverWait(post_element, 5).until(
                     EC.element_to_be_clickable((
-                        By.CSS_SELECTOR, 
-                        f'button.reactions-menu__reaction[aria-label="{reaction_map[reaction_type]}"]'
+                        By.CSS_SELECTOR,
+                        scraper.selectors['reactions'][reaction_type]
                     ))
                 )
-            except:
+                specific_reaction.click()
+                self.logger.info(f"Successfully added {reaction_type} reaction")
+                return True
+            
+            except TimeoutException:
+                # If specific reaction not found, try regular like
                 self.logger.warning(f"Could not find {reaction_type} button, falling back to Like")
-                try:
-                    reaction_button = WebDriverWait(scraper.driver, 5).until(
-                        EC.element_to_be_clickable((
-                            By.CSS_SELECTOR,
-                            'button.reactions-menu__reaction[aria-label="React Like"]'
-                        ))
-                    )
-                except:
-                    raise Exception("Could not find any reaction button")
-
-            # Click the specific reaction
-            try:
                 reaction_button.click()
-            except:
-                scraper.driver.execute_script("arguments[0].click();", reaction_button)
-
-            self.logger.info(f"Successfully added {reaction_type} reaction")
-            await asyncio.sleep(1)
-
+                await asyncio.sleep(1)
+                return True
+            
         except Exception as e:
             self.logger.error(f"Failed to add reaction: {str(e)}\nTraceback: {traceback.format_exc()}")
-            raise
+            return False
+
+    async def _safely_find_element(self, parent, by, selector, timeout=5):
+        """Safely find element with retry logic"""
+        try:
+            return WebDriverWait(parent, timeout).until(
+                EC.presence_of_element_located((by, selector))
+            )
+        except:
+            return None
 
     async def _add_comment(self, scraper, post_element, comment_text: str):
         """Add comment to the post"""
